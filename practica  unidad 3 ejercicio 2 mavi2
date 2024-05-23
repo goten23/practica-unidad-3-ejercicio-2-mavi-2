@@ -1,0 +1,152 @@
+#include <iostream>
+#include <Box2D/Box2D.h>
+#include <SDL2/SDL.h>
+
+const float32 WORLD_WIDTH = 100.0f;
+const float32 WORLD_HEIGHT = 100.0f;
+const float32 BALL_RADIUS = 5.0f;
+
+int main(int argc, char* argv[]) {
+    // Inicialización de SDL
+    if (SDL_Init(SDL_INIT_VIDEO) != 0) {
+        std::cerr << "SDL_Init Error: " << SDL_GetError() << std::endl;
+        return 1;
+    }
+
+    SDL_Window* window = SDL_CreateWindow("Simulación de Pelotas con Resorte",
+                                          100, 100, 800, 600, SDL_WINDOW_SHOWN);
+    if (window == nullptr) {
+        std::cerr << "SDL_CreateWindow Error: " << SDL_GetError() << std::endl;
+        SDL_Quit();
+        return 1;
+    }
+
+    SDL_Renderer* renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
+    if (renderer == nullptr) {
+        SDL_DestroyWindow(window);
+        std::cerr << "SDL_CreateRenderer Error: " << SDL_GetError() << std::endl;
+        SDL_Quit();
+        return 1;
+    }
+
+    // Inicialización de Box2D
+    b2Vec2 gravity(0.0f, -9.8f);
+    b2World world(gravity);
+
+    // Crear las pelotas
+    b2BodyDef ballBodyDef;
+    ballBodyDef.type = b2_dynamicBody;
+
+    ballBodyDef.position.Set(WORLD_WIDTH / 2.0f - 10.0f, WORLD_HEIGHT / 2.0f);
+    b2Body* ballBody1 = world.CreateBody(&ballBodyDef);
+    b2CircleShape ballShape;
+    ballShape.m_radius = BALL_RADIUS;
+    b2FixtureDef fixtureDef;
+    fixtureDef.shape = &ballShape;
+    fixtureDef.density = 1.0f;
+    fixtureDef.friction = 0.3f;
+    fixtureDef.restitution = 0.5f;
+    ballBody1->CreateFixture(&fixtureDef);
+
+    ballBodyDef.position.Set(WORLD_WIDTH / 2.0f + 10.0f, WORLD_HEIGHT / 2.0f);
+    b2Body* ballBody2 = world.CreateBody(&ballBodyDef);
+    ballBody2->CreateFixture(&fixtureDef);
+
+    // Crear el resorte
+    b2DistanceJointDef jointDef;
+    jointDef.bodyA = ballBody1;
+    jointDef.bodyB = ballBody2;
+    jointDef.length = 20.0f;
+    jointDef.frequencyHz = 2.0f;
+    jointDef.dampingRatio = 0.5f;
+    world.CreateJoint(&jointDef);
+
+    bool quit = false;
+    SDL_Event e;
+    bool mouseJointActive = false;
+    b2MouseJoint* mouseJoint = nullptr;
+    b2Body* selectedBody = nullptr;
+
+    while (!quit) {
+        while (SDL_PollEvent(&e) != 0) {
+            if (e.type == SDL_QUIT) {
+                quit = true;
+            } else if (e.type == SDL_MOUSEBUTTONDOWN) {
+                if (e.button.button == SDL_BUTTON_LEFT) {
+                    int mouseX, mouseY;
+                    SDL_GetMouseState(&mouseX, &mouseY);
+                    float32 worldMouseX = mouseX * (WORLD_WIDTH / 800.0f);
+                    float32 worldMouseY = WORLD_HEIGHT - mouseY * (WORLD_HEIGHT / 600.0f);
+
+                    b2Vec2 mousePos(worldMouseX, worldMouseY);
+                    for (b2Body* body : {ballBody1, ballBody2}) {
+                        if (body->GetFixtureList()->TestPoint(mousePos)) {
+                            selectedBody = body;
+                            break;
+                        }
+                    }
+
+                    if (selectedBody) {
+                        b2MouseJointDef mouseJointDef;
+                        mouseJointDef.bodyA = groundBody;
+                        mouseJointDef.bodyB = selectedBody;
+                        mouseJointDef.target = mousePos;
+                        mouseJointDef.maxForce = 1000.0f * selectedBody->GetMass();
+                        mouseJoint = (b2MouseJoint*)world.CreateJoint(&mouseJointDef);
+                        selectedBody->SetAwake(true);
+                        mouseJointActive = true;
+                    }
+                }
+            } else if (e.type == SDL_MOUSEBUTTONUP) {
+                if (e.button.button == SDL_BUTTON_LEFT) {
+                    if (mouseJoint) {
+                        world.DestroyJoint(mouseJoint);
+                        mouseJoint = nullptr;
+                        mouseJointActive = false;
+                        selectedBody = nullptr;
+                    }
+                }
+            } else if (e.type == SDL_MOUSEMOTION) {
+                if (mouseJoint) {
+                    int mouseX, mouseY;
+                    SDL_GetMouseState(&mouseX, &mouseY);
+                    float32 worldMouseX = mouseX * (WORLD_WIDTH / 800.0f);
+                    float32 worldMouseY = WORLD_HEIGHT - mouseY * (WORLD_HEIGHT / 600.0f);
+                    mouseJoint->SetTarget(b2Vec2(worldMouseX, worldMouseY));
+                }
+            }
+        }
+
+        world.Step(1.0f / 60.0f, 6, 2);
+
+        SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
+        SDL_RenderClear(renderer);
+
+        b2Vec2 position1 = ballBody1->GetPosition();
+        b2Vec2 position2 = ballBody2->GetPosition();
+
+        SDL_SetRenderDrawColor(renderer, 255, 0, 0, 255);
+        SDL_Rect ballRect1 = { (int)(position1.x * 800.0f / WORLD_WIDTH) - (int)BALL_RADIUS,
+                               (int)(600 - position1.y * 600.0f / WORLD_HEIGHT) - (int)BALL_RADIUS,
+                               (int)(2 * BALL_RADIUS), (int)(2 * BALL_RADIUS) };
+        SDL_RenderFillRect(renderer, &ballRect1);
+
+        SDL_Rect ballRect2 = { (int)(position2.x * 800.0f / WORLD_WIDTH) - (int)BALL_RADIUS,
+                               (int)(600 - position2.y * 600.0f / WORLD_HEIGHT) - (int)BALL_RADIUS,
+                               (int)(2 * BALL_RADIUS), (int)(2 * BALL_RADIUS) };
+        SDL_RenderFillRect(renderer, &ballRect2);
+
+        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+        SDL_RenderDrawLine(renderer,
+                           (int)(position1.x * 800.0f / WORLD_WIDTH), (int)(600 - position1.y * 600.0f / WORLD_HEIGHT),
+                           (int)(position2.x * 800.0f / WORLD_WIDTH), (int)(600 - position2.y * 600.0f / WORLD_HEIGHT));
+
+        SDL_RenderPresent(renderer);
+    }
+
+    SDL_DestroyRenderer(renderer);
+    SDL_DestroyWindow(window);
+    SDL_Quit();
+
+    return 0;
+}
